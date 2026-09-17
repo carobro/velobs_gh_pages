@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VelObserver — Risikoscore</title>
+  <link rel="icon" type="image/jpeg" href="logo.jpg">
+  <link rel="apple-touch-icon" href="logo.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;700&family=Fraunces:opsz,wght@9..144,400;9..144,500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <img class="topbar-logo" src="logo.jpg" alt="VelObserver Logo">
+    <span class="brand">VelObserver</span>
+    <span class="subtitle">Risikoscore</span>
+  </header>
+  <main class="wrap">
+    <div class="demo-banner">
+      <b>Statischer GitHub-Pages-Build:</b> Der Rechner (inkl. Konfigurationseditor) läuft komplett
+      im Browser — die Formeln aus <code>veloscore.py</code> sind 1:1 nach JavaScript portiert, es
+      werden also echte Scores berechnet. Es gibt aber <b>kein Backend</b>: gespeicherte
+      Berechnungen, CSV-Export und ein serverseitiges <code>config.yaml</code> entfallen. Eigene
+      Konfigurationsänderungen landen nur in <code>localStorage</code> dieses Browsers, nicht in einer
+      echten Datei. Die vollständige Flask-App liegt auf dem <code>main</code>-Branch unter
+      <code>bildanalyse-velobserver/velobserver-tools/risikoscore-tool/</code>.
+    </div>
+
+    <h1>Risikoscore</h1>
+    <p class="intro hint">Führungsform wählt Grundrisiko und Matrix, Tempo × Menge ergeben das Kernrisiko, Breite/Parkieren/
+      Belag/Steigung etc. ergänzen weitere Dimensionen. Aggregiert wird weakest-link-dominant (α·max + (1−α)·Ø) plus explizite Interaktionszuschläge.</p>
+
+    <div class="page-grid">
+      <aside class="card config-card">
+        <h2>Konfiguration</h2>
+        <p class="hint">Änderungen werden erst nach „Konfiguration speichern" aktiv und nur in
+          <code>localStorage</code> dieses Browsers abgelegt (kein Server, keine echte
+          <code>config.yaml</code>).</p>
+        <div id="config-msg"></div>
+
+        <details open>
+          <summary>Aggregation</summary>
+          <div id="cfg-aggregation"></div>
+        </details>
+
+        <details open>
+          <summary>Kategorien <small>(Parkieren, Belag, Steigung, Schwerverkehr)</small></summary>
+          <div id="cfg-categories"></div>
+        </details>
+
+        <details>
+          <summary>Raster <small>(Stützstellen Tempo/Menge)</small></summary>
+          <div id="cfg-grids"></div>
+        </details>
+
+        <details open>
+          <summary>Führungsformen</summary>
+          <div id="cfg-ff"></div>
+        </details>
+
+        <details>
+          <summary>Interaktionen</summary>
+          <div id="cfg-interactions"></div>
+        </details>
+
+        <div class="cfg-toolbar cfg-toolbar-main">
+          <button type="button" id="cfg-reset" class="small-btn">Änderungen verwerfen</button>
+          <button type="button" id="cfg-defaults" class="small-btn danger">Werkseinstellungen</button>
+          <button type="button" id="cfg-save" class="primary">Konfiguration speichern</button>
+        </div>
+      </aside>
+
+      <div class="calc-grid">
+        <div class="card">
+          <h2>Eingaben</h2>
+
+          <label class="field">
+            <span>Führungsform</span>
+            <select id="ff"></select>
+          </label>
+
+          <div class="grid-2">
+            <label class="field" id="field-speed">
+              <span>Geschwindigkeit V85 [km/h]</span>
+              <input type="number" id="speed_kmh" min="0" max="120" step="1" placeholder="z.B. 50">
+            </label>
+            <label class="field" id="field-volume">
+              <span>Verkehrsmenge DTV</span>
+              <input type="number" id="volume_dtv" min="0" step="100" placeholder="z.B. 9000">
+            </label>
+          </div>
+
+          <label class="field" id="field-hgv">
+            <span>Schwerverkehrsanteil</span>
+            <select id="hgv"></select>
+          </label>
+
+          <label class="field" id="field-width">
+            <span>Breite [m]</span>
+            <input type="number" id="width_m" min="0" step="0.1" placeholder="z.B. 1.2">
+            <small id="width-hint"></small>
+          </label>
+
+          <label class="field" id="field-parking">
+            <span>Parkieren angrenzend</span>
+            <select id="parking"></select>
+          </label>
+
+          <div class="grid-2">
+            <label class="field">
+              <span>Belag</span>
+              <select id="surface"></select>
+            </label>
+            <label class="field">
+              <span>Steigung</span>
+              <select id="gradient"></select>
+            </label>
+          </div>
+
+          <button type="button" id="calc" class="primary">Score berechnen</button>
+        </div>
+
+        <div class="card" id="result-card">
+          <h2>Ergebnis</h2>
+          <div id="result" class="result-empty">Eingaben ausfüllen und „Score berechnen" klicken.</div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <footer class="impressum">
+    Dieses Tool wurde im Rahmen des VelObserver-Projekts erstellt. Entwicklung: FHNW, Institut Geomatik.
+    Statische Demo-Version — kein Bezug zu echten Erhebungsdaten.
+  </footer>
+
+  <script src="veloscore.js"></script>
+  <script>
+const CONFIG_STORAGE_KEY = 'risikoscore_config_v1';
+const DIM_LABELS = {
+  traffic: "MIV-Interaktion",
+  width: "Breiten-Defizit",
+  dooring: "Türöffnung (Dooring)",
+  condition: "Belag/Steigung",
+};
+const DIM_ORDER = ["traffic", "width", "dooring", "condition"];
+const BAND_STOPS = ['#1c8131', '#83b200', '#ffaa00', '#ff8a3d', '#ff565d'];
+const OPTION_GROUPS = [
+  { key: "parking", modGroup: "dooring", title: "Parkieren angrenzend" },
+  { key: "surface", modGroup: "surface", title: "Belag" },
+  { key: "gradient", modGroup: "gradient", title: "Steigung" },
+  { key: "hgv", modGroup: "hgv_share", title: "Schwerverkehrsanteil" },
+];
+let DEFAULT_CONFIG = null;
+let FF_APPLIES = {};
+let FF_TARGET_WIDTH = {};
+
+function el(id) { return document.getElementById(id); }
+function clone(obj) { return JSON.parse(JSON.stringify(obj)); }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function scoreColor(score) {
+  const t = Math.max(0, Math.min(1, score / 100));
+  const idx = Math.min(BAND_STOPS.length - 1, Math.round(t * (BAND_STOPS.length - 1)));
+  return BAND_STOPS[idx];
+}
+
+/* ============================= Rechner ============================= */
+function applyRouter() {
+  const ff = el('ff').value;
+  const applies = FF_APPLIES[ff] || {};
+  el('field-width').classList.toggle('field-hidden', !applies.width);
+  el('field-parking').classList.toggle('field-hidden', !applies.dooring);
+  el('field-hgv').classList.toggle('field-hidden', !applies.traffic);
+  el('field-speed').classList.toggle('field-hidden', !applies.traffic);
+  el('field-volume').classList.toggle('field-hidden', !applies.traffic);
+  const target = FF_TARGET_WIDTH[ff];
+  el('width-hint').textContent = target ? `VSS-Sollbreite dieser Führungsform: ${target} m` : '';
+}
+el('ff').addEventListener('change', applyRouter);
+
+function renderResult(res) {
+  const badgeColor = scoreColor(res.score);
+  const dimsHtml = DIM_ORDER.map(name => {
+    const d = res.dims.find(x => x.name === name);
+    if (!d) return '';
+    const fillColor = scoreColor(d.value);
+    return `
+      <div class="dim-row${d.applicable ? '' : ' na'}">
+        <div class="dim-row-head">
+          <span>${DIM_LABELS[name]}</span>
+          <span class="val">${d.applicable ? d.value.toFixed(0) : 'n/a'}</span>
+        </div>
+        <div class="dim-track"><div class="dim-fill" style="width:${d.applicable ? d.value : 0}%;background:${fillColor}"></div></div>
+        <div class="dim-note">${d.note}</div>
+      </div>`;
+  }).join('');
+
+  const interHtml = res.interactions.length
+    ? res.interactions.map(it => `<span class="interaction-tag">${it.name} +${it.penalty}</span>`).join('')
+    : '<span class="none">keine Interaktions-Zuschläge</span>';
+
+  el('result').innerHTML = `
+    <div class="result-head">
+      <div class="score-badge" style="background:${badgeColor}">
+        <span class="num">${res.score}</span>
+        <span class="max">/ 100</span>
+      </div>
+      <div class="result-meta">
+        <p class="ff-label">${res.label}</p>
+        <div class="band" style="color:${badgeColor}">${res.band}</div>
+        <div class="driver">treibende Dimension: ${DIM_LABELS[res.driver] || res.driver}</div>
+      </div>
+    </div>
+    <div class="formula">Kern = ${res.alpha}·max(${res.vmax}) + ${(1 - res.alpha).toFixed(1)}·Ø(${res.wmean}) = ${res.core}
+      ${res.interactions_sum ? ` &nbsp;+&nbsp; Interaktionen ${res.interactions_sum}` : ''}
+      &nbsp;→&nbsp; Score ${res.score}</div>
+    <div class="dims">${dimsHtml}</div>
+    <div class="interactions"><h2>Interaktionen</h2>${interHtml}</div>
+  `;
+}
+
+function toFloatOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = parseFloat(value);
+  return Number.isNaN(n) ? null : n;
+}
+
+function segmentFromPayload(data) {
+  const seg = { ff: data.ff };
+  const speed = toFloatOrNull(data.speed_kmh);
+  if (speed !== null) seg.speed_kmh = speed;
+  const volume = toFloatOrNull(data.volume_dtv);
+  if (volume !== null) seg.volume_dtv = volume;
+  const width = toFloatOrNull(data.width_m);
+  if (width !== null) seg.width_m = width;
+  ["parking", "surface", "gradient", "hgv"].forEach(key => {
+    if (data[key]) seg[key] = data[key];
+  });
+  return seg;
+}
+
+el('calc').addEventListener('click', () => {
+  const payload = {
+    ff: el('ff').value,
+    speed_kmh: el('speed_kmh').value,
+    volume_dtv: el('volume_dtv').value,
+    width_m: el('width_m').value,
+    parking: el('parking').value,
+    surface: el('surface').value,
+    gradient: el('gradient').value,
+    hgv: el('hgv').value,
+  };
+  if (!payload.ff) {
+    el('result').innerHTML = `<div class="result-empty">Führungsform fehlt</div>`;
+    return;
+  }
+  try {
+    const engine = new VeloScore.VeloRisk(CFG);
+    const res = engine.score(segmentFromPayload(payload));
+    renderResult(res);
+  } catch (err) {
+    el('result').innerHTML = `<div class="result-empty">Fehler bei der Berechnung: ${escapeHtml(err.message || String(err))}</div>`;
+  }
+});
+
+/* ======================= Konfigurationseditor ======================= */
+let CFG = null;
+let currentFF = null;
+
+function categoriesFromConfig(cfg) {
+  const categories = {};
+  OPTION_GROUPS.forEach(g => {
+    const opts = cfg.options[g.key] || [];
+    const mod = cfg.modifiers[g.modGroup] || {};
+    categories[g.key] = opts.map(o => ({ value: o.value, label: o.label, points: mod[o.value] ?? 0 }));
+  });
+  return categories;
+}
+
+function loadStoredConfig() {
+  try {
+    const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    return null;
+  }
+}
+function storeConfig(cfg) {
+  try { localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(cfg)); } catch (err) { /* z.B. privater Modus ohne Storage */ }
+}
+
+function loadConfig() {
+  CFG = loadStoredConfig() || clone(DEFAULT_CONFIG);
+  CFG.categories = categoriesFromConfig(CFG);
+  currentFF = Object.keys(CFG.fuehrungsformen)[0] || null;
+  renderConfigAll();
+  syncCalculatorFromConfig();
+}
+
+function renderConfigAll() {
+  renderAggregation();
+  renderCategories();
+  renderGrids();
+  renderFFEditor();
+  renderInteractions();
+}
+
+function renderAggregation() {
+  const w = CFG.aggregation.dimension_weights;
+  el('cfg-aggregation').innerHTML = `
+    <label class="field">
+      <span>α <small>(Gewicht des Maximums, 0–1 — höher = strenger/weakest-link)</small></span>
+      <input type="number" min="0" max="1" step="0.05" value="${CFG.aggregation.alpha}"
+        oninput="CFG.aggregation.alpha = parseFloat(this.value) || 0">
+    </label>
+    <div class="grid-2">
+      ${DIM_ORDER.map(d => `
+        <label class="field"><span>Gewicht ${DIM_LABELS[d]}</span>
+          <input type="number" min="0" step="0.1" value="${w[d] ?? 0}"
+            oninput="CFG.aggregation.dimension_weights['${d}'] = parseFloat(this.value) || 0">
+        </label>`).join('')}
+    </div>`;
+}
+
+function renderCategories() {
+  el('cfg-categories').innerHTML = OPTION_GROUPS.map(g => {
+    const rows = CFG.categories[g.key];
+    const rowsHtml = rows.map((r, i) => `
+      <div class="cfg-list-row">
+        <input type="text" value="${escapeHtml(r.value)}" placeholder="wert_slug"
+          oninput="CFG.categories['${g.key}'][${i}].value = this.value">
+        <input type="text" value="${escapeHtml(r.label)}" placeholder="Bezeichnung"
+          oninput="CFG.categories['${g.key}'][${i}].label = this.value">
+        <input type="number" value="${r.points}" min="0" max="100" step="1"
+          oninput="CFG.categories['${g.key}'][${i}].points = parseFloat(this.value) || 0">
+        <button type="button" class="icon-btn" title="Kategorie entfernen"
+          onclick="removeCategoryRow('${g.key}', ${i})">×</button>
+      </div>`).join('');
+    return `
+      <div class="cfg-group">
+        <h3>${g.title}</h3>
+        <div class="cfg-list-head"><span>Wert</span><span>Bezeichnung</span><span>Punkte</span><span></span></div>
+        ${rowsHtml}
+        <button type="button" class="small-btn" onclick="addCategoryRow('${g.key}')">+ Kategorie</button>
+      </div>`;
+  }).join('');
+}
+function addCategoryRow(key) {
+  CFG.categories[key].push({ value: '', label: '', points: 0 });
+  renderCategories();
+}
+function removeCategoryRow(key, i) {
+  if (CFG.categories[key].length <= 1) { alert('Mindestens eine Kategorie muss bestehen bleiben.'); return; }
+  CFG.categories[key].splice(i, 1);
+  renderCategories();
+}
+
+function renderGrids() {
+  el('cfg-grids').innerHTML = `
+    <p class="hint">Anzahl Stützstellen ist fix (5×5); nur die Werte sind hier änderbar.
+      Eine andere Rasterauflösung erfordert Anpassung aller Matrizen direkt im
+      <code>config.default.json</code> dieses Builds.</p>
+    ${['speed_kmh', 'volume_dtv'].map(key => `
+      <div class="field">
+        <span>${key === 'speed_kmh' ? 'Geschwindigkeit [km/h]' : 'Verkehrsmenge DTV'}</span>
+        <div class="grid-stops">
+          ${CFG.grids[key].map((v, i) => `
+            <input type="number" value="${v}" step="1"
+              oninput="CFG.grids['${key}'][${i}] = parseFloat(this.value) || 0; renderFFEditor();">`).join('')}
+        </div>
+      </div>`).join('')}
+  `;
+}
+
+function ffOptionsHtml() {
+  return Object.entries(CFG.fuehrungsformen)
+    .map(([k, v]) => `<option value="${k}" ${k === currentFF ? 'selected' : ''}>${escapeHtml(v.label)} (${k})</option>`)
+    .join('');
+}
+
+function renderFFEditor() {
+  const keys = Object.keys(CFG.fuehrungsformen);
+  if (!currentFF || !keys.includes(currentFF)) currentFF = keys[0] || null;
+  if (!currentFF) { el('cfg-ff').innerHTML = '<p class="hint">Keine Führungsform vorhanden.</p>'; return; }
+  const ff = CFG.fuehrungsformen[currentFF];
+
+  const appliesHtml = DIM_ORDER.map(d => `
+    <label class="checkbox-field">
+      <input type="checkbox" ${ff.applies[d] ? 'checked' : ''} onchange="toggleFFApplies('${d}', this.checked)">
+      ${DIM_LABELS[d]}
+    </label>`).join('');
+
+  let matrixHtml = '';
+  if (ff.applies.traffic) {
+    const speeds = CFG.grids.speed_kmh, vols = CFG.grids.volume_dtv;
+    matrixHtml = `
+      <h3>Kernmatrix <small>(Zeilen: Tempo, Spalten: Menge)</small></h3>
+      <div class="matrix-wrap"><table class="matrix-table">
+        <tr><th></th>${vols.map(v => `<th>${v}</th>`).join('')}</tr>
+        ${speeds.map((s, i) => `
+          <tr><th>${s}</th>${vols.map((_, j) => `
+            <td><input type="number" min="0" max="100"
+              value="${ff.matrix && ff.matrix[i] && ff.matrix[i][j] !== undefined ? ff.matrix[i][j] : 0}"
+              oninput="setMatrixCell(${i}, ${j}, this.value)"></td>`).join('')}
+          </tr>`).join('')}
+      </table></div>`;
+  }
+
+  const widthHtml = ff.applies.width ? `
+    <div class="grid-2">
+      <label class="field"><span>Sollbreite VSS [m]</span>
+        <input type="number" min="0" step="0.05" value="${ff.target_width_m ?? ''}"
+          oninput="CFG.fuehrungsformen['${currentFF}'].target_width_m = parseFloat(this.value) || 0">
+      </label>
+      <label class="field"><span>Bauliches Minimum [m] <small>(optional)</small></span>
+        <input type="number" min="0" step="0.05" value="${ff.hard_min_width_m ?? ''}"
+          oninput="CFG.fuehrungsformen['${currentFF}'].hard_min_width_m = this.value === '' ? null : (parseFloat(this.value) || 0)">
+      </label>
+    </div>` : '';
+
+  el('cfg-ff').innerHTML = `
+    <label class="field">
+      <span>Führungsform auswählen</span>
+      <select onchange="selectFF(this.value)">${ffOptionsHtml()}</select>
+    </label>
+    <div class="cfg-toolbar">
+      <button type="button" class="small-btn" onclick="addFF()">+ Neue Führungsform</button>
+      <button type="button" class="small-btn danger" onclick="removeFF()">Diese entfernen</button>
+    </div>
+    <label class="field"><span>Bezeichnung</span>
+      <input type="text" value="${escapeHtml(ff.label)}"
+        oninput="CFG.fuehrungsformen['${currentFF}'].label = this.value">
+    </label>
+    <label class="field"><span>Grundrisiko <small>(0–100, gilt auch bei Tempo/Menge = 0)</small></span>
+      <input type="number" min="0" max="100" value="${ff.base_risk}"
+        oninput="CFG.fuehrungsformen['${currentFF}'].base_risk = parseFloat(this.value) || 0">
+    </label>
+    <div class="field"><span>Anwendbare Dimensionen</span><div class="checkbox-group">${appliesHtml}</div></div>
+    ${widthHtml}
+    ${matrixHtml}
+  `;
+}
+function selectFF(key) { currentFF = key; renderFFEditor(); }
+function setMatrixCell(i, j, val) {
+  const ff = CFG.fuehrungsformen[currentFF];
+  if (!ff.matrix) ff.matrix = CFG.grids.speed_kmh.map(() => CFG.grids.volume_dtv.map(() => 0));
+  ff.matrix[i][j] = parseFloat(val) || 0;
+}
+function toggleFFApplies(dim, checked) {
+  const ff = CFG.fuehrungsformen[currentFF];
+  ff.applies[dim] = checked;
+  if (dim === 'traffic' && checked && !ff.matrix) {
+    ff.matrix = CFG.grids.speed_kmh.map(() => CFG.grids.volume_dtv.map(() => 0));
+  }
+  if (dim === 'width' && checked && (ff.target_width_m === null || ff.target_width_m === undefined)) {
+    ff.target_width_m = 1.5;
+  }
+  renderFFEditor();
+}
+function addFF() {
+  const key = prompt('Interner Schlüssel der neuen Führungsform (nur Buchstaben/Zahlen/_, muss mit Buchstabe beginnen):');
+  if (!key) return;
+  if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(key)) { alert('Ungültiger Schlüssel.'); return; }
+  if (CFG.fuehrungsformen[key]) { alert('Dieser Schlüssel existiert bereits.'); return; }
+  const label = prompt('Bezeichnung (Anzeigename):', key) || key;
+  CFG.fuehrungsformen[key] = {
+    label, base_risk: 20,
+    applies: { traffic: true, width: true, dooring: true, condition: true },
+    target_width_m: 1.5, hard_min_width_m: 1.0,
+    matrix: CFG.grids.speed_kmh.map(() => CFG.grids.volume_dtv.map(() => 20)),
+  };
+  currentFF = key;
+  renderFFEditor();
+}
+function removeFF() {
+  const keys = Object.keys(CFG.fuehrungsformen);
+  if (keys.length <= 1) { alert('Mindestens eine Führungsform muss bestehen bleiben.'); return; }
+  if (!confirm(`Führungsform "${CFG.fuehrungsformen[currentFF].label}" wirklich entfernen?`)) return;
+  delete CFG.fuehrungsformen[currentFF];
+  currentFF = Object.keys(CFG.fuehrungsformen)[0];
+  renderFFEditor();
+}
+
+function condLabel(c) {
+  return { speed_ge: 'Tempo ≥', volume_ge: 'Menge ≥', width_ge: 'Breiten-Dim. ≥', dooring_ge: 'Dooring-Dim. ≥' }[c];
+}
+function renderInteractions() {
+  const ffKeys = Object.keys(CFG.fuehrungsformen);
+  const rowsHtml = CFG.interactions.map((it, i) => {
+    const w = it.when || {};
+    const ffSelected = new Set(w.ff_in || []);
+    return `
+    <div class="cfg-interaction-row">
+      <div class="grid-2">
+        <label class="field"><span>Name</span>
+          <input type="text" value="${escapeHtml(it.name)}" oninput="CFG.interactions[${i}].name = this.value">
+        </label>
+        <label class="field"><span>Zuschlag</span>
+          <input type="number" value="${it.penalty}" step="1"
+            oninput="CFG.interactions[${i}].penalty = parseFloat(this.value) || 0">
+        </label>
+      </div>
+      <label class="field"><span>Nur für Führungsformen <small>(nichts markiert = alle)</small></span>
+        <select multiple size="4" onchange="setInteractionFFIn(${i}, this)">
+          ${ffKeys.map(k => `<option value="${k}" ${ffSelected.has(k) ? 'selected' : ''}>${escapeHtml(CFG.fuehrungsformen[k].label)}</option>`).join('')}
+        </select>
+      </label>
+      <div class="grid-2">
+        ${['speed_ge', 'volume_ge', 'width_ge', 'dooring_ge'].map(cond => `
+          <label class="field"><span>${condLabel(cond)}</span>
+            <input type="number" value="${w[cond] ?? ''}" placeholder="—"
+              oninput="setInteractionCond(${i}, '${cond}', this.value)">
+          </label>`).join('')}
+      </div>
+      <button type="button" class="small-btn danger" onclick="removeInteraction(${i})">Interaktion entfernen</button>
+    </div>`;
+  }).join('');
+  el('cfg-interactions').innerHTML = `
+    ${rowsHtml || '<p class="hint">Keine Interaktionen definiert.</p>'}
+    <button type="button" class="small-btn" onclick="addInteraction()">+ Neue Interaktion</button>
+  `;
+}
+function setInteractionFFIn(i, select) {
+  const vals = Array.from(select.selectedOptions).map(o => o.value);
+  if (!CFG.interactions[i].when) CFG.interactions[i].when = {};
+  if (vals.length) CFG.interactions[i].when.ff_in = vals;
+  else delete CFG.interactions[i].when.ff_in;
+}
+function setInteractionCond(i, cond, val) {
+  if (!CFG.interactions[i].when) CFG.interactions[i].when = {};
+  if (val === '') delete CFG.interactions[i].when[cond];
+  else CFG.interactions[i].when[cond] = parseFloat(val) || 0;
+}
+function addInteraction() {
+  CFG.interactions.push({ name: `interaktion_${CFG.interactions.length + 1}`, when: { speed_ge: 50 }, penalty: 5 });
+  renderInteractions();
+}
+function removeInteraction(i) {
+  CFG.interactions.splice(i, 1);
+  renderInteractions();
+}
+
+function buildConfigPayload() {
+  const options = {}, modifiers = { width: CFG.modifiers.width };
+  OPTION_GROUPS.forEach(g => {
+    options[g.key] = CFG.categories[g.key].map(r => ({ value: r.value, label: r.label }));
+    modifiers[g.modGroup] = {};
+    CFG.categories[g.key].forEach(r => { modifiers[g.modGroup][r.value] = r.points; });
+  });
+  return {
+    grids: CFG.grids,
+    aggregation: CFG.aggregation,
+    modifiers,
+    options,
+    interactions: CFG.interactions,
+    fuehrungsformen: CFG.fuehrungsformen,
+  };
+}
+
+function syncCalculatorFromConfig() {
+  const sel = el('ff');
+  const prevValue = sel.value;
+  sel.innerHTML = Object.entries(CFG.fuehrungsformen)
+    .map(([k, v]) => `<option value="${k}">${escapeHtml(v.label)}</option>`).join('');
+  sel.value = CFG.fuehrungsformen[prevValue] ? prevValue : (Object.keys(CFG.fuehrungsformen)[0] || '');
+
+  FF_APPLIES = {}; FF_TARGET_WIDTH = {};
+  Object.entries(CFG.fuehrungsformen).forEach(([k, v]) => {
+    FF_APPLIES[k] = v.applies;
+    FF_TARGET_WIDTH[k] = v.target_width_m;
+  });
+  applyRouter();
+
+  OPTION_GROUPS.forEach(g => {
+    const s = el(g.key);
+    if (!s) return;
+    const prev = s.value;
+    s.innerHTML = CFG.categories[g.key].map(r => `<option value="${r.value}">${escapeHtml(r.label)}</option>`).join('');
+    if (CFG.categories[g.key].some(r => r.value === prev)) s.value = prev;
+  });
+}
+
+el('cfg-save').addEventListener('click', () => {
+  el('config-msg').innerHTML = '';
+  const { cfg, errors } = VeloScore.buildRiskConfig(CFG, buildConfigPayload());
+  if (errors.length) {
+    el('config-msg').innerHTML = `<div class="cfg-msg error"><strong>Nicht gespeichert:</strong><ul>${
+      errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>`;
+    return;
+  }
+  storeConfig(cfg);
+  el('config-msg').innerHTML = '<div class="cfg-msg ok">Konfiguration in diesem Browser gespeichert (localStorage).</div>';
+  CFG = cfg;
+  CFG.categories = categoriesFromConfig(CFG);
+  currentFF = Object.keys(CFG.fuehrungsformen).includes(currentFF) ? currentFF : Object.keys(CFG.fuehrungsformen)[0];
+  renderConfigAll();
+  syncCalculatorFromConfig();
+});
+
+el('cfg-reset').addEventListener('click', () => {
+  if (!confirm('Alle unbestätigten Änderungen an der Konfiguration verwerfen und neu laden?')) return;
+  el('config-msg').innerHTML = '';
+  loadConfig();
+});
+
+el('cfg-defaults').addEventListener('click', () => {
+  if (!confirm('Werkseinstellungen laden? Das überschreibt die in diesem Browser gespeicherte Konfiguration.')) return;
+  try { localStorage.removeItem(CONFIG_STORAGE_KEY); } catch (err) { /* ignore */ }
+  el('config-msg').innerHTML = '<div class="cfg-msg ok">Werkseinstellungen geladen.</div>';
+  loadConfig();
+});
+
+fetch('config.default.json')
+  .then(r => r.json())
+  .then(cfg => { DEFAULT_CONFIG = cfg; loadConfig(); })
+  .catch(err => {
+    el('result').innerHTML = `<div class="result-empty">Konnte Konfiguration nicht laden: ${escapeHtml(String(err))}</div>`;
+  });
+  </script>
+</body>
+</html>
