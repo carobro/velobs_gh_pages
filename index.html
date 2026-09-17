@@ -18,15 +18,6 @@
     <span class="subtitle">Risikoscore</span>
   </header>
   <main class="wrap">
-    <div class="demo-banner">
-      <b>Statischer GitHub-Pages-Build:</b> Der Rechner (inkl. Konfigurationseditor) läuft komplett
-      im Browser — die Formeln aus <code>veloscore.py</code> sind 1:1 nach JavaScript portiert, es
-      werden also echte Scores berechnet. Es gibt aber <b>kein Backend</b>: gespeicherte
-      Berechnungen, CSV-Export und ein serverseitiges <code>config.yaml</code> entfallen. Eigene
-      Konfigurationsänderungen landen nur in <code>localStorage</code> dieses Browsers, nicht in einer
-      echten Datei. Die vollständige Flask-App liegt auf dem <code>main</code>-Branch unter
-      <code>bildanalyse-velobserver/velobserver-tools/risikoscore-tool/</code>.
-    </div>
 
     <h1>Risikoscore</h1>
     <p class="intro hint">Führungsform wählt Grundrisiko und Matrix, Tempo × Menge ergeben das Kernrisiko, Breite/Parkieren/
@@ -35,9 +26,7 @@
     <div class="page-grid">
       <aside class="card config-card">
         <h2>Konfiguration</h2>
-        <p class="hint">Änderungen werden erst nach „Konfiguration speichern" aktiv und nur in
-          <code>localStorage</code> dieses Browsers abgelegt (kein Server, keine echte
-          <code>config.yaml</code>).</p>
+        <p class="hint">Änderungen werden erst nach „Konfiguration speichern" aktiv und nur in <code>localStorage</code> dieses Browsers abgelegt (kein Server, keine echte <code>config.yaml</code>). Aktuell nur zu Demozwecke. Wird später automatisch basierenf auf Experteninput berechnet</p>
         <div id="config-msg"></div>
 
         <details open>
